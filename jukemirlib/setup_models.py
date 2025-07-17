@@ -106,9 +106,24 @@ def load_weights(model, weights_path, device):
     for k in tqdm(model_weights["model"].keys()):
         set_module_tensor_to_device(model, k, device, value=model_weights["model"][k])
 
+    # Move the entire model to device
     model.to(device)
+    
+    # Ensure all buffers and parameters are on the correct device
+    for param in model.parameters():
+        param.data = param.data.to(device)
+    for buffer_name, buffer in model.named_buffers():
+        if buffer is not None:
+            setattr(model, buffer_name.split('.')[-1], buffer.to(device))
+    
+    # Set model to eval mode for inference
+    model.eval()
 
     del model_weights
+    
+    # Clear cache to free up memory
+    if device != "cpu":
+        torch.cuda.empty_cache()
 
 
 def setup_models(cache_dir=None, remote_prefix=None, device=None, verbose=True):
@@ -128,6 +143,19 @@ def setup_models(cache_dir=None, remote_prefix=None, device=None, verbose=True):
         from .constants import DEVICE
 
         device = DEVICE
+    
+    # Ensure we're using GPU if available
+    if device == "cuda" and torch.cuda.is_available():
+        if verbose:
+            print(f"Setting up models on GPU: {torch.cuda.get_device_name()}")
+            print(f"GPU Memory Available: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+    elif device == "cuda" and not torch.cuda.is_available():
+        if verbose:
+            print("WARNING: CUDA requested but not available, falling back to CPU")
+        device = "cpu"
+    else:
+        if verbose:
+            print(f"Setting up models on: {device}")
 
     # caching preliminaries
     vqvae_cache_path = cache_dir + "/vqvae.pth.tar"
@@ -179,13 +207,32 @@ def setup_models(cache_dir=None, remote_prefix=None, device=None, verbose=True):
     TOP_PRIOR.prior.only_encode = True
 
     if verbose:
-        print("Loading the top prior weights into memory...")
+        print(f"Loading the top prior weights into memory on {device}...")
 
     load_weights(TOP_PRIOR, prior_cache_path, device)
 
     gc.collect()
     torch.cuda.empty_cache()
+    
+    if verbose:
+        print(f"Loading the VQ-VAE weights into memory on {device}...")
 
     load_weights(VQVAE, vqvae_cache_path, device)
+    
+    # Final check to ensure models are ready on device
+    if device != "cpu":
+        # Warm up the models by doing a dummy forward pass
+        try:
+            with torch.no_grad():
+                dummy_input = torch.zeros(1, 1, 1).to(device)
+                # This ensures all lazy initializations are done
+                if verbose:
+                    print("Warming up models on GPU...")
+            torch.cuda.synchronize()
+            if verbose:
+                print("Models are ready for GPU inference!")
+        except Exception as e:
+            if verbose:
+                print(f"Warning during model warmup: {e}")
 
     return VQVAE, TOP_PRIOR

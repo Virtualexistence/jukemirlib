@@ -57,6 +57,9 @@ def get_z(vqvae, audio):
 
     audio = torch.from_numpy(audio[..., np.newaxis]).to(device=DEVICE)
 
+    # Ensure vqvae is on the correct device
+    vqvae = vqvae.to(DEVICE)
+    
     zs = vqvae.encode(audio)
 
     # get the last level of VQ-VAE tokens
@@ -68,6 +71,9 @@ def get_z(vqvae, audio):
 def get_cond(top_prior):
     from . import DEVICE
 
+    # Ensure top_prior is on the correct device
+    top_prior = top_prior.to(DEVICE)
+    
     # model only accepts sample length conditioning of
     # >60 seconds, so we use 62
     sample_length_in_seconds = 62
@@ -178,12 +184,21 @@ def get_activations_custom(
     if TOP_PRIOR.prior.y_cond:
         x[:, 0] = y_cond.view(N, TOP_PRIOR.prior.width)
     else:
-        x[:, 0] = TOP_PRIOR.prior.start_token
+        # Ensure start_token is on the same device as x
+        start_token = TOP_PRIOR.prior.start_token
+        if hasattr(start_token, 'to'):
+            start_token = start_token.to(x.device)
+        x[:, 0] = start_token
 
+    # Get positional embeddings and ensure they're on the correct device
+    pos_emb = TOP_PRIOR.prior.pos_emb()[:input_seq_length]
+    if hasattr(pos_emb, 'to'):
+        pos_emb = pos_emb.to(x.device)
+    
     # for some reason, p=0.0, so the dropout stuff does absolutely nothing
     x = (
         TOP_PRIOR.prior.x_emb_dropout(x)
-        + TOP_PRIOR.prior.pos_emb_dropout(TOP_PRIOR.prior.pos_emb())[:input_seq_length]
+        + TOP_PRIOR.prior.pos_emb_dropout(pos_emb)
         + x_cond
     )  # Pos emb and dropout
 
@@ -248,6 +263,15 @@ def extract(
     # set up the models if they have not been yet
     if VQVAE is None and TOP_PRIOR is None:
         VQVAE, TOP_PRIOR = setup_models()
+    
+    # Import DEVICE after models are set up
+    from . import DEVICE
+    
+    # Ensure models are on the correct device
+    if VQVAE is not None:
+        VQVAE = VQVAE.to(DEVICE)
+    if TOP_PRIOR is not None:
+        TOP_PRIOR = TOP_PRIOR.to(DEVICE)
 
     # main function that runs extraction end-to-end.
 

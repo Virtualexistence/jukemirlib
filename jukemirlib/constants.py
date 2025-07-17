@@ -7,6 +7,7 @@ TOP_PRIOR = None
 x_cond = None
 y_cond = None
 CACHE_DIR = "/data/.cache/jukemirlib"
+# Ensure DEVICE is set properly with explicit GPU selection
 DEVICE = "cuda" if t.cuda.is_available() else "cpu"
 T = 8192
 JUKEBOX_SAMPLE_RATE = 44100
